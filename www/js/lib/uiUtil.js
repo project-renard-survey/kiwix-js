@@ -72,11 +72,11 @@ define([], function() {
         return scriptUrl;
     }
 
-    // Creates a BLOB URI but does not attach the script
-    function createBlobUri(script) {
-        var scriptBlob = new Blob([script], { type: 'text/javascript' });
-        var scriptUri = URL.createObjectURL(scriptBlob);
-        return scriptUri;
+    // Creates a BLOB URI but does not attach the asset
+    function createBlobUri(asset, assetType) {
+        var assetBlob = new Blob([asset], { type: assetType });
+        var assetUri = URL.createObjectURL(assetBlob);
+        return assetUri;
     }
 
     // Compile regular expressions for replaceInlineEvents function

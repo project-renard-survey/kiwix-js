@@ -838,8 +838,8 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
          * @type Object
          */
         var pageState = {
-            'cssCount': null,
-            'cssExtracted': null,
+            'assetsCount': null,
+            'assetsExtracted': null,
             'imagesCount': null,
             'imagesExtracted': null,
             'scriptsCount': null,
@@ -885,11 +885,12 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
         
         var iframeArticleContent = document.getElementById('articleContent');
 
-        // We run preloadJavaScript first to extract any JS that is not yet cached 
-        preloadJavaScript();
+        // We run preloadAssets first to extract any CSS/JS that is not yet cached 
+        preloadAssets();
         // Once the cache is populated, we take the URIs from it
-        qFns(preloadJavaScriptFromCache, 'scriptsCount', 'scriptsExtracted');
-        qFns(writeArticleToIframe, 'scriptsCount', 'scriptsExtracted');
+        qFns(preloadAssetsFromCache, 'assetsCount', 'assetsExtracted');
+        qFns(renderIfAssetsFulfilled, 'assetsCount', 'assetsExtracted');
+        qFns(writeArticleToIframe, 'assetsCount', 'assetsExtracted');
         
         iframeArticleContent.onload = function() {
             iframeArticleContent.onload = function(){};
@@ -902,10 +903,9 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
             pushBrowserHistoryState(dirEntry.namespace + "/" + dirEntry.url);
             
             parseAnchorsJQuery();
-            injectInlineScriptsJQuery();
             parseEvents();
-            loadCSSJQuery();
-            qFns(loadImagesJQuery, 'cssCount', 'cssExtracted');
+            injectInlineScriptsJQuery();
+            loadImagesJQuery();
         };
      
         function writeArticleToIframe() {
@@ -916,49 +916,61 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
             articleContent.close();
         }
 
-        function preloadJavaScriptFromCache() {
-            var scriptsArray = htmlArticle.match(/<script[^>]*?data-kiwixurl[^>]+>/gi);
-            for (var i = scriptsArray.length; i--;) {
-                var scriptUri = scriptsArray[i].match(/data-kiwixurl=["']([^"']+)/);
-                var title = uiUtil.removeUrlParameters(decodeURIComponent(scriptUri[1]));
+        function preloadAssetsFromCache() {
+            var assetsArray = htmlArticle.match(/<(?:script|link)[^>]*?data-kiwixurl[^>]+>/gi);
+            for (var i = assetsArray.length; i--;) {
+                var assetUri = assetsArray[i].match(/data-kiwixurl=["']([^"']+)/);
+                var title = uiUtil.removeUrlParameters(decodeURIComponent(assetUri[1]));
                 if (assetsCache.has(title)) {
-                    var newScript = scriptsArray[i].replace(scriptUri[1], assetsCache.get(title));
-                    newScript = newScript.replace(/data-kiwixurl/, 'src');
-                    newScript = newScript.replace(/>/, ' data-kiwixsrc="' + title + '">');
-                    htmlArticle = htmlArticle.replace(scriptsArray[i], newScript);
+                    var newAsset = assetsArray[i].replace(assetUri[1], assetsCache.get(title));
+                    var refAttribute = /<script/.test(newAsset) ? 'src' : 'href';
+                    newAsset = newAsset.replace(/data-kiwixurl/, refAttribute);
+                    newAsset = newAsset.replace(/>/, ' data-kiwixsrc="' + title + '">');
+                    htmlArticle = htmlArticle.replace(assetsArray[i], newAsset);
                 }
             }
         }
 
-        function preloadJavaScript() {
-            // Preload JavaScript for compatibility with onload events
-            var scriptsArray = htmlArticle.match(/<script[^>]*?data-kiwixurl[^>]+>/gi);
-            for (var i = scriptsArray.length; i--;) {
-                var scriptUri = scriptsArray[i].match(/data-kiwixurl=["']([^"']+)/);
-                var title = uiUtil.removeUrlParameters(decodeURIComponent(scriptUri[1]));
-                pageState.scriptsCount++;
-                if (assetsCache.has(title)) {
-                    pageState.scriptsExtracted++;
-                    continue;
-                } else {
+        function preloadAssets() {
+            // Preload CSS and JS (for compatibility with onload events)
+            var assetsArray = htmlArticle.match(/<(?:script|link)[^>]*?data-kiwixurl[^>]+>/gi);
+            for (var i = assetsArray.length; i--;) {
+                var assetUri = assetsArray[i].match(/data-kiwixurl=["']([^"']+)/);
+                var title = uiUtil.removeUrlParameters(decodeURIComponent(assetUri[1]));
+                if (assetsCache.has(title)) { continue; }
+                else {
+                    pageState.assetsCount++;
+                    var shortTitle = title.replace(/[^/]+\//g, '').substring(0, 18);
+                    $('#cachingCSS').show();
+                    $('#cachingCSS').html('Caching ' + shortTitle + '...');
                     selectedArchive.getDirEntryByTitle(title).then(function(dirEntry) {
                         if (dirEntry === null) {
-                            console.log("Error: js file not found: " + title);
-                            pageState.scriptsCount--;
+                            console.log("Error: asset file not found: " + title);
+                            pageState.assetsCount--;
                         } else {
                             return selectedArchive.readUtf8File(dirEntry, function (fileDirEntry, content) {
                                 var fullUrl = fileDirEntry.namespace + "/" + fileDirEntry.url; 
-                                var scriptUri = uiUtil.createBlobUri(content);
-                                assetsCache.set(fullUrl, scriptUri);
-                                pageState.scriptsExtracted++;
+                                var assetType = /\.css$/i.test(fullUrl) ? 'text/css' : 'text/javascript';
+                                var assetUri = uiUtil.createBlobUri(content, assetType);
+                                assetsCache.set(fullUrl, assetUri);
+                                pageState.assetsExtracted++;
                             });
                         }
                     }).fail(function (e) {
-                        console.error("could not find DirEntry for javascript : " + title, e);
-                        pageState.scriptsCount--;
+                        console.error("could not find DirEntry for asset : " + title, e);
+                        pageState.assetsCount--;
                     });
                 }
             }
+        }
+
+        function renderIfAssetsFulfilled() {
+            $('#cachingCSS').html('Caching styles...');
+            $('#cachingCSS').hide();
+            $('#searchingArticles').hide();
+            $('#articleContent').show();
+            // We have to resize here for devices with On Screen Keyboards when loading from the article search list
+            //resizeIFrame();
         }
 
         function qFns(fn, val1, val2) {
@@ -1081,57 +1093,6 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
             });
         }
 
-        function loadCSSJQuery() {
-            $('#articleContent').contents().find('link[data-kiwixurl]').each(function () {
-                var link = $(this);
-                var linkUrl = link.attr("data-kiwixurl");
-                var title = uiUtil.removeUrlParameters(decodeURIComponent(linkUrl));
-                // Increment pageState CSS counter to keep track of number of CSS sent to decompressor
-                pageState.cssCount++;
-                if (assetsCache && assetsCache.has(title)) {
-                    var cssContent = assetsCache.get(title);
-                    uiUtil.replaceCSSLinkWithInlineCSS(link, cssContent);
-                    pageState.cssExtracted++;
-                } else {
-                    $('#cachingCSS').show();
-                    selectedArchive.getDirEntryByTitle(title)
-                    .then(function (dirEntry) {
-                        return selectedArchive.readUtf8File(dirEntry,
-                            function (fileDirEntry, content) {
-                                var fullUrl = fileDirEntry.namespace + "/" + fileDirEntry.url;
-                                if (assetsCache) assetsCache.set(fullUrl, content);
-                                uiUtil.replaceCSSLinkWithInlineCSS(link, content);
-
-                                pageState.cssExtracted++;
-                                renderIfCSSFulfilled(fileDirEntry.url);
-                            }
-                        );
-                    }).fail(function (e) {
-                        console.error("could not find DirEntry for CSS : " + title, e);
-                        pageState.cssCount--;
-                        renderIfCSSFulfilled(fileDirEntry.url);
-                    });
-                }
-            });
-            renderIfCSSFulfilled();
-
-            // Some pages are extremely heavy to render, so we prevent rendering by keeping the iframe hidden
-            // until all CSS content is available [kiwix-js #381]
-            function renderIfCSSFulfilled(title) {
-                if (pageState.cssExtracted >= pageState.cssCount) {
-                    $('#cachingCSS').html('Caching styles...');
-                    $('#cachingCSS').hide();
-                    $('#searchingArticles').hide();
-                    $('#articleContent').show();
-                    // We have to resize here for devices with On Screen Keyboards when loading from the article search list
-                    resizeIFrame();
-                } else if (title) {
-                    title = title.replace(/[^/]+\//g, '').substring(0, 18);
-                    $('#cachingCSS').html('Caching ' + title + '...');
-                }
-            }
-        }
-
         function injectInlineScriptsJQuery() {
             if (!inlineJavaScripts.length) return;
             var iframe = document.getElementById('articleContent').contentDocument;
@@ -1143,7 +1104,7 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
             // End of temp code
             for (var i = 0; i < inlineJavaScripts.length; i++) {
                 uiUtil.createScriptBlob(iframe, inlineJavaScripts[i]);
-    }
+            }
         }
     }
 
