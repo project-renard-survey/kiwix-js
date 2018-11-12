@@ -947,15 +947,15 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
                 if (assetsCache.has(title)) { continue; }
                 else {
                     pageState.assetsCount++;
-                    var shortTitle = title.replace(/[^/]+\//g, '').substring(0, 18);
                     $('#cachingCSS').show();
-                    $('#cachingCSS').html('Caching ' + shortTitle + '...');
                     selectedArchive.getDirEntryByTitle(title).then(function(dirEntry) {
                         if (dirEntry === null) {
                             console.log("Error: asset file not found: " + title);
                             pageState.assetsCount--;
                         } else {
                             return selectedArchive.readUtf8File(dirEntry, function (fileDirEntry, content) {
+                                var shortTitle = fileDirEntry.url.replace(/[^/]+\//g, '').substring(0, 18);
+                                $('#cachingCSS').html('Caching ' + shortTitle + '...');
                                 var fullUrl = fileDirEntry.namespace + "/" + fileDirEntry.url; 
                                 var assetType = /\.css$/i.test(fullUrl) ? 'text/css' : 'text/javascript';
                                 var assetUri = uiUtil.createBlobUri(content, assetType);
