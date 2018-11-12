@@ -868,8 +868,8 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
 
         // Replaces ZIM-style URLs of img, script and link tags with a data-url to prevent 404 errors [kiwix-js #272 #376]
         // This replacement also processes the URL to remove the path so that the URL is ready for subsequent jQuery functions
-        htmlArticle = htmlArticle.replace(regexpTagsWithZimUrl, "$1data-kiwixurl$2$3");            
-
+        htmlArticle = htmlArticle.replace(regexpTagsWithZimUrl, "$1data-kiwixurl$2$3");
+        
         // Compute base URL
         var urlPath = regexpPath.test(dirEntry.url) ? urlPath = dirEntry.url.match(regexpPath)[1] : '';
         var baseUrl = dirEntry.namespace + '/' + urlPath;
@@ -884,6 +884,12 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
         $('#articleContent').contents().remove();
         
         var iframeArticleContent = document.getElementById('articleContent');
+
+        // We run preloadJavaScript first to extract any JS that is not yet cached 
+        preloadJavaScript();
+        // Once the cache is populated, we take the URIs from it
+        qFns(preloadJavaScriptFromCache, 'scriptsCount', 'scriptsExtracted');
+        qFns(writeArticleToIframe, 'scriptsCount', 'scriptsExtracted');
         
         iframeArticleContent.onload = function() {
             iframeArticleContent.onload = function(){};
@@ -891,24 +897,69 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
             $('#articleListHeaderMessage').empty();
             $('#articleListWithHeader').hide();
             $("#prefix").val("");
-            // Inject the new article's HTML into the iframe
-            var articleContent = iframeArticleContent.contentDocument.documentElement;
-            articleContent.innerHTML = htmlArticle;
-            // Add any missing classes stripped from the <html> tag
-            if (htmlCSS) articleContent.getElementsByTagName('body')[0].classList.add(htmlCSS);
+            
             // Allow back/forward in browser history
             pushBrowserHistoryState(dirEntry.namespace + "/" + dirEntry.url);
             
             parseAnchorsJQuery();
-            loadCSSJQuery();
-            loadImagesJQuery();
-            qFns(loadJavaScriptJQuery, 'cssCount', 'cssExtracted');
-            qFns(injectInlineScriptsJQuery, 'scriptsCount', 'scriptsExtracted');
+            injectInlineScriptsJQuery();
             parseEvents();
+            loadCSSJQuery();
+            qFns(loadImagesJQuery, 'cssCount', 'cssExtracted');
         };
      
-        // Load the blank article to clear the iframe (NB iframe onload event runs *after* this)
-        iframeArticleContent.src = "article.html";
+        function writeArticleToIframe() {
+            var articleContent = iframeArticleContent.contentDocument;
+            articleContent.open('text/html', 'replace');
+            articleContent.write("<!DOCTYPE html>"); // Ensures browsers parse iframe in Standards mode
+            articleContent.write(htmlArticle);
+            articleContent.close();
+        }
+
+        function preloadJavaScriptFromCache() {
+            var scriptsArray = htmlArticle.match(/<script[^>]*?data-kiwixurl[^>]+>/gi);
+            for (var i = scriptsArray.length; i--;) {
+                var scriptUri = scriptsArray[i].match(/data-kiwixurl=["']([^"']+)/);
+                var title = uiUtil.removeUrlParameters(decodeURIComponent(scriptUri[1]));
+                if (assetsCache.has(title)) {
+                    var newScript = scriptsArray[i].replace(scriptUri[1], assetsCache.get(title));
+                    newScript = newScript.replace(/data-kiwixurl/, 'src');
+                    newScript = newScript.replace(/>/, ' data-kiwixsrc="' + title + '">');
+                    htmlArticle = htmlArticle.replace(scriptsArray[i], newScript);
+                }
+            }
+        }
+
+        function preloadJavaScript() {
+            // Preload JavaScript for compatibility with onload events
+            var scriptsArray = htmlArticle.match(/<script[^>]*?data-kiwixurl[^>]+>/gi);
+            for (var i = scriptsArray.length; i--;) {
+                var scriptUri = scriptsArray[i].match(/data-kiwixurl=["']([^"']+)/);
+                var title = uiUtil.removeUrlParameters(decodeURIComponent(scriptUri[1]));
+                pageState.scriptsCount++;
+                if (assetsCache.has(title)) {
+                    pageState.scriptsExtracted++;
+                    continue;
+                } else {
+                    selectedArchive.getDirEntryByTitle(title).then(function(dirEntry) {
+                        if (dirEntry === null) {
+                            console.log("Error: js file not found: " + title);
+                            pageState.scriptsCount--;
+                        } else {
+                            return selectedArchive.readUtf8File(dirEntry, function (fileDirEntry, content) {
+                                var fullUrl = fileDirEntry.namespace + "/" + fileDirEntry.url; 
+                                var scriptUri = uiUtil.createBlobUri(content);
+                                assetsCache.set(fullUrl, scriptUri);
+                                pageState.scriptsExtracted++;
+                            });
+                        }
+                    }).fail(function (e) {
+                        console.error("could not find DirEntry for javascript : " + title, e);
+                        pageState.scriptsCount--;
+                    });
+                }
+            }
+        }
 
         function qFns(fn, val1, val2) {
             var newFunc = {
@@ -1031,17 +1082,6 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
         }
 
         function loadCSSJQuery() {
-            // Ensure all sections are open for clients that lack JavaScript support, or that have some restrictive CSP [kiwix-js #355].
-            // This is needed only for some versions of ZIM files generated by mwoffliner (at least in early 2018), where the article sections are closed by default on small screens.
-            // These sections can be opened by clicking on them, but this is done with some javascript.
-            // The code below is a workaround, a better fix is tracked on [mwoffliner #324]
-            var iframe = document.getElementById('articleContent').contentDocument;
-            var collapsedBlocks = iframe.querySelectorAll('.collapsible-block:not(.open-block), .collapsible-heading:not(.open-block)');
-            // Using decrementing loop to optimize performance : see https://stackoverflow.com/questions/3520688 
-            for (var i = collapsedBlocks.length; i--;) {
-                collapsedBlocks[i].classList.add('open-block');
-            }
-
             $('#articleContent').contents().find('link[data-kiwixurl]').each(function () {
                 var link = $(this);
                 var linkUrl = link.attr("data-kiwixurl");
@@ -1090,44 +1130,6 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
                     $('#cachingCSS').html('Caching ' + title + '...');
                 }
             }
-        }
-
-        function loadJavaScriptJQuery() {
-            $('#articleContent').contents().find('script[data-kiwixurl]').each(function() {
-                var iframe = document.getElementById('articleContent').contentDocument;
-                var script = $(this);
-                var scriptUrl = script.attr("data-kiwixurl");
-                // TODO check that the type of the script is text/javascript or application/javascript
-                var title = uiUtil.removeUrlParameters(decodeURIComponent(scriptUrl));
-                pageState.scriptsCount++;
-                if (assetsCache && assetsCache.has(title)) {
-                    scriptUrl = assetsCache.get(title);
-                    var newScript = iframe.createElement('script');
-                    newScript.src = scriptUrl;
-                    newScript.dataset.kiwixsrc = title;
-                    iframe.head.appendChild(newScript);
-                    pageState.scriptsExtracted++;
-                    script.remove();
-                } else {
-                    selectedArchive.getDirEntryByTitle(title).then(function(dirEntry) {
-                    if (dirEntry === null) {
-                        console.log("Error: js file not found: " + title);
-                        pageState.scriptsCount--;
-                    } else {
-                        return selectedArchive.readBinaryFile(dirEntry, function (fileDirEntry, content) {
-                            var fullUrl = fileDirEntry.namespace + "/" + fileDirEntry.url; 
-                            var scriptUrl = uiUtil.createScriptBlob(iframe, content, script[0], true);
-                            if (assetsCache) assetsCache.set(fullUrl, scriptUrl);
-                            pageState.scriptsExtracted++;
-                            script.remove();
-                        });
-                    }
-                    }).fail(function (e) {
-                        console.error("could not find DirEntry for javascript : " + title, e);
-                        pageState.scriptsCount--;
-                    });
-                }
-            });
         }
 
         function injectInlineScriptsJQuery() {

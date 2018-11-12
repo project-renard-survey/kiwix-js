@@ -72,18 +72,11 @@ define([], function() {
         return scriptUrl;
     }
 
-    // Similar to above function but uses script data: URI instead of Blob
-    // Keep this to ascertain which method works best with various CSPs
-    function createScriptDataUri(iframe, script, node, callback) {
-        var scriptDataUri = 'data:text/javascript;charset=UTF-8,' + encodeURIComponent(script);
-        var newScript = iframe.createElement('script');
-        if (node && node.dataset.kiwixsrc) newScript.dataset.kiwixsrc = node.dataset.kiwixsrc;
-        if (callback) {
-            newScript.onload = callback;
-        }
-        newScript.src = scriptDataUri;
-        iframe.body.appendChild(newScript);
-        return scriptDataUri;
+    // Creates a BLOB URI but does not attach the script
+    function createBlobUri(script) {
+        var scriptBlob = new Blob([script], { type: 'text/javascript' });
+        var scriptUri = URL.createObjectURL(scriptBlob);
+        return scriptUri;
     }
 
     // Compile regular expressions for replaceInlineEvents function
@@ -183,7 +176,7 @@ define([], function() {
     return {
         feedNodeWithBlob: feedNodeWithBlob,
         createScriptBlob: createScriptBlob,
-        createScriptDataUri: createScriptDataUri,
+        createBlobUri: createBlobUri,
         replaceInlineEvents: replaceInlineEvents,
         attachInlineFunctions: attachInlineFunctions,
         replaceCSSLinkWithInlineCSS: replaceCSSLinkWithInlineCSS,
