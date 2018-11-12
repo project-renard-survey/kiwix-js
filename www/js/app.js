@@ -917,6 +917,13 @@ define(['jquery', 'zimArchiveLoader', 'util', 'uiUtil', 'cookies','abstractFiles
         }
 
         function preloadAssetsFromCache() {
+            // WORKAROUND: Inject CSS required to open heading sections in Desktop view
+            htmlArticle = htmlArticle.replace(/(<\/head>)/i, 
+                '<style>@media all and (min-width: 720px) {\n' +
+                '   .client-js .collapsible-block {\n' +
+                '       display: block !important;\n' +
+                '   }\n' +
+                '}</style>\n$1');
             var assetsArray = htmlArticle.match(/<(?:script|link)[^>]*?data-kiwixurl[^>]+>/gi);
             for (var i = assetsArray.length; i--;) {
                 var assetUri = assetsArray[i].match(/data-kiwixurl=["']([^"']+)/);
