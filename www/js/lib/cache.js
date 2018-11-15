@@ -37,26 +37,27 @@ define(['q'], function(Q) {
             callback(true);
             return;
         }
-        assetsCache.capability = 'test'; 
+        // Set baseline capability
+        assetsCache.capability = 'memory'; 
         idxDB('count', function(result) {
             if (result !== false) {
-                assetsCache.capability = 'indexedDB';
+                assetsCache.capability = 'indexedDB|' + assetsCache.capability;
             } else {
-                // Test for localCache capability
+                console.log("inexedDB is not supported");
+            }
+            // Test for localCache capability (prefer localCache because access is marginally faster)
                 if (typeof Storage !== "undefined") {
                     try {
                         // If localStorage is really supported, this won't produce an error
                         var item = window.localStorage.length;
-                        assetsCache.capability = 'localStorage';
+                    assetsCache.capability = 'localStorage|' + assetsCache.capability;
                     } catch (err) {
-                        // Fall back to using memory cache
-                        assetsCache.capability = 'memory';
+                    console.log("localStorage is not supported");
                     }
                 }
-            }
-            console.log('Setting storage type to ' + assetsCache.capability);
-            if (assetsCache.capability === 'localStorage') {
-                console.log("DEV: 'UnknownError' may be produced as part of capability detection");
+            console.log('Setting storage type to ' + assetsCache.capability.match(/^[^|]+/)[0]);
+            if (/localStorage/.test(assetsCache.capability)) {
+                console.log("DEV: 'UnknownError' may be produced as part of localStorage capability detection");
             }
             callback(result);
         });
@@ -68,10 +69,11 @@ define(['q'], function(Q) {
      * @param {Function} callback which will receive an array containing [cacheType, cacheCount]
      */
     function count(callback) {
-        test(function(result){
+        test(function(result) {
             var cacheType = null;
             var cacheCount = null;
-            switch (assetsCache.capability) {
+            var test = assetsCache.capability.match(/^[^|]+/)[0];
+            switch (assetsCache.capability.match(/^[^|]+/)[0]) {
                 case 'memory':
                     cacheType = 'Memory';
                     cacheCount = assetsCache.size;
@@ -121,7 +123,7 @@ define(['q'], function(Q) {
         var open = indexedDB.open(dbName, 1);
 
         open.onerror = function(e) {
-            // Suppress error reporting if testing (Firefox supports indexedDB but cannot use it with
+            // Suppress error reporting if testing (older versions of Firefox support indexedDB but cannot use it with
             // the file:// protocol, so will report an error)
             if (assetsCache.capability !== 'test') {
                 console.error('IndexedDB failed to open: ' + open.error.message);
@@ -234,12 +236,12 @@ define(['q'], function(Q) {
             setArticle(keyArticle[1], keyArticle[2], contents, callback);
             return;
         }
-        if (assetsCache.capability === 'localStorage') {
+        if (/^localStorage/.test(assetsCache.capability)) {
             localStorage.setItem(key, contents);
         } else {
             assetsCache.set(key, contents);
         }
-        if (assetsCache.capability === 'indexedDB') {
+        if (/^indexedDB/.test(assetsCache.capability)) {
             idxDB(key, contents, function(result) {
                 callback(result);
             });
@@ -266,10 +268,10 @@ define(['q'], function(Q) {
         var contents = null;
         if (assetsCache.has(key)) {
             contents = assetsCache.get(key);
-        } else if (assetsCache.capability === 'localStorage') {
+        } else if (/^localStorage/.test(assetsCache.capability)) {
             contents = localStorage.getItem(key);
         } 
-        if (!contents && assetsCache.capability === 'indexedDB') {
+        if (!contents && /^indexedDB/.test(assetsCache.capability)) {
             idxDB(key, function(contents) {
                 if (contents) {
                     // Also store in fast memory cache to prevent repaints
@@ -320,31 +322,35 @@ define(['q'], function(Q) {
         if (items === 'all') {
             var result;
             var capability = assetsCache.capability;
-            if (/memory|indexedDB/.test(capability)) {
+            if (/^memory|^indexedDB/.test(capability)) {
                 itemsCount += assetsCache.size;
                 result = "assetsCache";
             }
             // Delete and reinitialize assetsCache
             assetsCache = new Map();
             assetsCache.capability = capability;
-            if (capability === 'localStorage') {
+            // Loose test here ensures we clear localStorage even if it wasn't being used in this session
+            if (/localStorage/.test(capability)) {
                 itemsCount += localStorage.length;
                 localStorage.clear();
                 result = result ? result + " and localStorage" : "localStorage";
             }
-            if (capability === 'indexedDB') {
+            // Loose test here ensures we clear indexedDB even if it wasn't being used in this session
+            if (/indexedDB/.test(capability)) {
+                result = result ? result + " and indexedDB" : "indexedDB";
                 idxDB('count', function(number) {
                     idxDB('clear', function() {
                         itemsCount += number;
+                        result = result ? result + " (" + itemsCount + " items deleted)" : "no assets to delete";
+                        console.log("cache.clear: " + result);
                         callback(itemsCount);
                     });
                 });
-                result = result ? result + " and indexedDB" : "indexedDB";
             }
         }
+        if (!/indexedDB/.test(capability)) {
         result = result ? result + " (" + itemsCount + " items deleted)" : "no assets to delete";
         console.log("cache.clear: " + result);
-        if (capability !== 'indexedDB') {
             callback(itemsCount);
         }
     }
